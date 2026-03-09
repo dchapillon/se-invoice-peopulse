@@ -183,8 +183,13 @@ const InvoiceEditor = () => {
     ctx.putImageData(pdfPageData, 0, 0);
 
     annotations.forEach((ann) => {
-      ctx.fillStyle = ann.color;
       ctx.font = `${ann.bold ? "bold " : ""}${ann.fontSize}px sans-serif`;
+      const metrics = ctx.measureText(ann.text);
+      // Draw white background to mask content underneath
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(ann.x - 2, ann.y - ann.fontSize, metrics.width + 4, ann.fontSize + 4);
+      // Draw the text on top
+      ctx.fillStyle = ann.color;
       ctx.fillText(ann.text, ann.x, ann.y);
       if (!ann.confirmed) {
         // Draw dashed border around unconfirmed
