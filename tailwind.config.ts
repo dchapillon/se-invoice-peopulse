@@ -47,6 +47,11 @@ export default {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        step: {
+          active: "hsl(var(--step-active))",
+          done: "hsl(var(--step-done))",
+          pending: "hsl(var(--step-pending))",
+        },
         sidebar: {
           DEFAULT: "hsl(var(--sidebar-background))",
           foreground: "hsl(var(--sidebar-foreground))",
