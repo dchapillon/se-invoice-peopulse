@@ -26,6 +26,7 @@ const InvoiceEditor = () => {
   const [step, setStep] = useState(1);
   const [xmlContent, setXmlContent] = useState("");
   const [fileName, setFileName] = useState("");
+  const [originalInvoiceNumber, setOriginalInvoiceNumber] = useState("");
   const [replacementDone, setReplacementDone] = useState(false);
   const [pdfBase64, setPdfBase64] = useState("");
   const [annotations, setAnnotations] = useState<TextAnnotation[]>([]);
@@ -47,6 +48,11 @@ const InvoiceEditor = () => {
     const reader = new FileReader();
     reader.onload = (ev) => {
       let text = ev.target?.result as string;
+      // Extract original invoice number
+      const invoiceMatch = text.match(/<InvoiceNumber>(.*?)<\/InvoiceNumber>/);
+      if (invoiceMatch) {
+        setOriginalInvoiceNumber(invoiceMatch[1]);
+      }
       // Replace invoice number
       const regex = new RegExp(`<InvoiceNumber>${OLD_INVOICE}</InvoiceNumber>`, "g");
       if (regex.test(text)) {
@@ -289,14 +295,25 @@ const InvoiceEditor = () => {
             <Upload className="w-4 h-4" />
             {fileName || "Choose XML file"}
           </Button>
+          {originalInvoiceNumber && step >= 2 && (
+            <div className="mt-3 p-3 bg-secondary rounded-md text-sm text-foreground">
+              <span className="text-muted-foreground">Numéro de facture trouvé :</span>{" "}
+              <span className="font-semibold">{originalInvoiceNumber}</span>
+            </div>
+          )}
           {replacementDone && (
-            <Badge className="ml-3 bg-accent text-accent-foreground gap-1">
-              <Check className="w-3 h-3" /> Invoice number replaced
+            <Badge className="mt-2 bg-accent text-accent-foreground gap-1">
+              <Check className="w-3 h-3" /> Remplacé par : {NEW_INVOICE}
             </Badge>
           )}
-          {fileName && !replacementDone && step >= 2 && (
-            <Badge variant="secondary" className="ml-3">
-              No matching invoice number found
+          {fileName && !replacementDone && originalInvoiceNumber && step >= 2 && (
+            <Badge variant="secondary" className="mt-2">
+              Aucune correspondance avec {OLD_INVOICE}
+            </Badge>
+          )}
+          {fileName && !originalInvoiceNumber && step >= 2 && (
+            <Badge variant="secondary" className="mt-2">
+              Aucune balise InvoiceNumber trouvée
             </Badge>
           )}
         </section>
