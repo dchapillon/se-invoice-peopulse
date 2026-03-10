@@ -220,6 +220,11 @@ const InvoiceEditor = () => {
 
   const confirmAnnotation = () => {
     if (activeAnnotation === null) return;
+    const ann = annotations[activeAnnotation];
+    // Update the InvoiceNumber tag in the XML with the annotation text
+    setXmlContent((prev) =>
+      prev.replace(/<InvoiceNumber>.*?<\/InvoiceNumber>/, `<InvoiceNumber>${ann.text}</InvoiceNumber>`)
+    );
     updateAnnotation("confirmed", true);
     setActiveAnnotation(null);
   };
