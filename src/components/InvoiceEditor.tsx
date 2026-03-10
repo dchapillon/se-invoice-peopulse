@@ -48,6 +48,11 @@ const InvoiceEditor = () => {
     const reader = new FileReader();
     reader.onload = (ev) => {
       let text = ev.target?.result as string;
+      // Extract original invoice number
+      const invoiceMatch = text.match(/<InvoiceNumber>(.*?)<\/InvoiceNumber>/);
+      if (invoiceMatch) {
+        setOriginalInvoiceNumber(invoiceMatch[1]);
+      }
       // Replace invoice number
       const regex = new RegExp(`<InvoiceNumber>${OLD_INVOICE}</InvoiceNumber>`, "g");
       if (regex.test(text)) {
