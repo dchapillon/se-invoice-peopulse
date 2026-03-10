@@ -39,6 +39,8 @@ const InvoiceEditor = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const xmlInvoice = deriveXmlInvoice(newInvoice);
+
   // Step 1: Handle XML upload
   const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -47,19 +49,10 @@ const InvoiceEditor = () => {
 
     const reader = new FileReader();
     reader.onload = (ev) => {
-      let text = ev.target?.result as string;
-      // Replace invoice number
-      const regex = new RegExp(`<InvoiceNumber>${OLD_INVOICE}</InvoiceNumber>`, "g");
-      if (regex.test(text)) {
-        text = text.replace(regex, `<InvoiceNumber>${NEW_INVOICE}</InvoiceNumber>`);
-        setReplacementDone(true);
-      } else {
-        setReplacementDone(false);
-      }
+      const text = ev.target?.result as string;
       setXmlContent(text);
       setStep(2);
     };
-    // Read as ISO-8859-1
     reader.readAsText(file, "iso-8859-1");
   }, []);
 
