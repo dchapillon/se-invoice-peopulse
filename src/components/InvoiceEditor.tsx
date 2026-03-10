@@ -287,16 +287,20 @@ const InvoiceEditor = () => {
             <Upload className="w-4 h-4" />
             {fileName || "Choose XML file"}
           </Button>
-          {replacementDone && (
-            <Badge className="ml-3 bg-accent text-accent-foreground gap-1">
-              <Check className="w-3 h-3" /> Invoice number replaced
-            </Badge>
-          )}
-          {fileName && !replacementDone && step >= 2 && (
-            <Badge variant="secondary" className="ml-3">
-              No matching invoice number found
-            </Badge>
-          )}
+          <div className="mt-3 flex items-center gap-3">
+            <label className="text-sm text-foreground font-medium">New invoice number</label>
+            <Input
+              value={newInvoice}
+              onChange={(e) => setNewInvoice(e.target.value)}
+              className="w-44"
+              placeholder="C7/0114558"
+            />
+            {newInvoice && (
+              <Badge variant="secondary" className="gap-1 text-xs">
+                XML → FE{newInvoice.replace(/\//g, "")}
+              </Badge>
+            )}
+          </div>
         </section>
 
         {/* Step 2 */}
