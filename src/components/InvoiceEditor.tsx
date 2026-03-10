@@ -10,7 +10,8 @@ declare const jspdf: any;
 
 const STEPS = ["XML Import", "PDF Display", "Annotate", "Download"];
 const OLD_INVOICE = "FE0C70114558";
-const NEW_INVOICE = "C7/0114558";
+
+const deriveXmlInvoice = (typed: string) => "FE" + typed.replace(/\//g, "");
 
 interface TextAnnotation {
   text: string;
