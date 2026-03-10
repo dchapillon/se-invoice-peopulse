@@ -26,6 +26,7 @@ const InvoiceEditor = () => {
   const [step, setStep] = useState(1);
   const [xmlContent, setXmlContent] = useState("");
   const [fileName, setFileName] = useState("");
+  const [originalInvoiceNumber, setOriginalInvoiceNumber] = useState("");
   const [replacementDone, setReplacementDone] = useState(false);
   const [pdfBase64, setPdfBase64] = useState("");
   const [annotations, setAnnotations] = useState<TextAnnotation[]>([]);
