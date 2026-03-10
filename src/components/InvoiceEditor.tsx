@@ -307,11 +307,6 @@ const InvoiceEditor = () => {
               <span className="font-semibold">{originalInvoiceNumber}</span>
             </div>
           )}
-          {replacementDone && (
-            <Badge className="mt-2 bg-accent text-accent-foreground gap-1">
-              <Check className="w-3 h-3" /> Remplacé par : {NEW_INVOICE}
-            </Badge>
-          )}
           {fileName && !originalInvoiceNumber && step >= 2 && (
             <Badge variant="secondary" className="mt-2">
               Aucune balise InvoiceNumber trouvée
