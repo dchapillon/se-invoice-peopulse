@@ -233,8 +233,12 @@ const InvoiceEditor = () => {
     }
     const newBase64 = btoa(binary);
 
-    // Replace in XML
-    const finalXml = xmlContent.replace(
+    // Replace invoice number and embedded PDF in XML
+    let finalXml = xmlContent.replace(
+      new RegExp(`<InvoiceNumber>${OLD_INVOICE}</InvoiceNumber>`, "g"),
+      `<InvoiceNumber>${xmlInvoice}</InvoiceNumber>`
+    );
+    finalXml = finalXml.replace(
       /<EmbeddedPdf>[\s\S]*?<\/EmbeddedPdf>/,
       `<EmbeddedPdf>${newBase64}</EmbeddedPdf>`
     );
