@@ -25,9 +25,9 @@ interface TextAnnotation {
 
 const InvoiceEditor = () => {
   const [step, setStep] = useState(1);
+  const [newInvoice, setNewInvoice] = useState("C7/0114558");
   const [xmlContent, setXmlContent] = useState("");
   const [fileName, setFileName] = useState("");
-  const [replacementDone, setReplacementDone] = useState(false);
   const [pdfBase64, setPdfBase64] = useState("");
   const [annotations, setAnnotations] = useState<TextAnnotation[]>([]);
   const [activeAnnotation, setActiveAnnotation] = useState<number | null>(null);
