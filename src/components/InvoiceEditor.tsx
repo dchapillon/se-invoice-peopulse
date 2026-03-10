@@ -10,8 +10,7 @@ declare const jspdf: any;
 
 const STEPS = ["XML Import", "PDF Display", "Annotate", "Download"];
 const OLD_INVOICE = "FE0C70114558";
-
-const deriveXmlInvoice = (typed: string) => "FE" + typed.replace(/\//g, "");
+const NEW_INVOICE = "C7/0114558";
 
 interface TextAnnotation {
   text: string;
@@ -25,9 +24,9 @@ interface TextAnnotation {
 
 const InvoiceEditor = () => {
   const [step, setStep] = useState(1);
-  const [newInvoice, setNewInvoice] = useState("C7/0114558");
   const [xmlContent, setXmlContent] = useState("");
   const [fileName, setFileName] = useState("");
+  const [replacementDone, setReplacementDone] = useState(false);
   const [pdfBase64, setPdfBase64] = useState("");
   const [annotations, setAnnotations] = useState<TextAnnotation[]>([]);
   const [activeAnnotation, setActiveAnnotation] = useState<number | null>(null);
@@ -39,8 +38,6 @@ const InvoiceEditor = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const xmlInvoice = deriveXmlInvoice(newInvoice);
-
   // Step 1: Handle XML upload
   const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -49,10 +46,19 @@ const InvoiceEditor = () => {
 
     const reader = new FileReader();
     reader.onload = (ev) => {
-      const text = ev.target?.result as string;
+      let text = ev.target?.result as string;
+      // Replace invoice number
+      const regex = new RegExp(`<InvoiceNumber>${OLD_INVOICE}</InvoiceNumber>`, "g");
+      if (regex.test(text)) {
+        text = text.replace(regex, `<InvoiceNumber>${NEW_INVOICE}</InvoiceNumber>`);
+        setReplacementDone(true);
+      } else {
+        setReplacementDone(false);
+      }
       setXmlContent(text);
       setStep(2);
     };
+    // Read as ISO-8859-1
     reader.readAsText(file, "iso-8859-1");
   }, []);
 
@@ -108,7 +114,7 @@ const InvoiceEditor = () => {
       const y = (e.clientY - rect.top) * scaleY;
 
       const newAnnotation: TextAnnotation = {
-        text: newInvoice,
+        text: NEW_INVOICE,
         x,
         y,
         fontSize: 28,
@@ -233,12 +239,8 @@ const InvoiceEditor = () => {
     }
     const newBase64 = btoa(binary);
 
-    // Replace invoice number and embedded PDF in XML
-    let finalXml = xmlContent.replace(
-      new RegExp(`<InvoiceNumber>${OLD_INVOICE}</InvoiceNumber>`, "g"),
-      `<InvoiceNumber>${xmlInvoice}</InvoiceNumber>`
-    );
-    finalXml = finalXml.replace(
+    // Replace in XML
+    const finalXml = xmlContent.replace(
       /<EmbeddedPdf>[\s\S]*?<\/EmbeddedPdf>/,
       `<EmbeddedPdf>${newBase64}</EmbeddedPdf>`
     );
@@ -255,7 +257,7 @@ const InvoiceEditor = () => {
     a.download = fileName.replace(".xml", "_modified.xml");
     a.click();
     URL.revokeObjectURL(url);
-  }, [xmlContent, fileName, xmlInvoice]);
+  }, [xmlContent, fileName]);
 
   const activeAnn = activeAnnotation !== null ? annotations[activeAnnotation] : null;
 
@@ -287,20 +289,16 @@ const InvoiceEditor = () => {
             <Upload className="w-4 h-4" />
             {fileName || "Choose XML file"}
           </Button>
-          <div className="mt-3 flex items-center gap-3">
-            <label className="text-sm text-foreground font-medium">New invoice number</label>
-            <Input
-              value={newInvoice}
-              onChange={(e) => setNewInvoice(e.target.value)}
-              className="w-44"
-              placeholder="C7/0114558"
-            />
-            {newInvoice && (
-              <Badge variant="secondary" className="gap-1 text-xs">
-                XML → FE{newInvoice.replace(/\//g, "")}
-              </Badge>
-            )}
-          </div>
+          {replacementDone && (
+            <Badge className="ml-3 bg-accent text-accent-foreground gap-1">
+              <Check className="w-3 h-3" /> Invoice number replaced
+            </Badge>
+          )}
+          {fileName && !replacementDone && step >= 2 && (
+            <Badge variant="secondary" className="ml-3">
+              No matching invoice number found
+            </Badge>
+          )}
         </section>
 
         {/* Step 2 */}
