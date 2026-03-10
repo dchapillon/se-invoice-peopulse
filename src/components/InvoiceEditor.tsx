@@ -255,7 +255,7 @@ const InvoiceEditor = () => {
     a.download = fileName.replace(".xml", "_modified.xml");
     a.click();
     URL.revokeObjectURL(url);
-  }, [xmlContent, fileName]);
+  }, [xmlContent, fileName, xmlInvoice]);
 
   const activeAnn = activeAnnotation !== null ? annotations[activeAnnotation] : null;
 
