@@ -11,6 +11,7 @@ declare const jspdf: any;
 const STEPS = ["XML Import", "PDF Display", "Annotate", "Download"];
 const OLD_INVOICE = "FE0C70114558";
 const NEW_INVOICE = "C7/0114558";
+const ANNOTATION_INVOICE = "FE" + NEW_INVOICE.replace("/", "");
 
 interface TextAnnotation {
   text: string;
@@ -120,7 +121,7 @@ const InvoiceEditor = () => {
       const y = (e.clientY - rect.top) * scaleY;
 
       const newAnnotation: TextAnnotation = {
-        text: NEW_INVOICE,
+        text: ANNOTATION_INVOICE,
         x,
         y,
         fontSize: 28,
