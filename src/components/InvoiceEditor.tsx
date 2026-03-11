@@ -119,7 +119,7 @@ const InvoiceEditor = () => {
       const y = (e.clientY - rect.top) * scaleY;
 
       const newAnnotation: TextAnnotation = {
-        text: ANNOTATION_INVOICE,
+        text: transformedInvoiceNumber,
         x,
         y,
         fontSize: 28,
