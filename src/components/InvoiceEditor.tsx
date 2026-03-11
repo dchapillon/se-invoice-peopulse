@@ -51,12 +51,11 @@ const InvoiceEditor = () => {
       // Extract original invoice number
       const invoiceMatch = text.match(/<InvoiceNumber>(.*?)<\/InvoiceNumber>/);
       if (invoiceMatch) {
-        setOriginalInvoiceNumber(invoiceMatch[1]);
-      }
-      // Replace invoice number
-      const regex = new RegExp(`<InvoiceNumber>${OLD_INVOICE}</InvoiceNumber>`, "g");
-      if (regex.test(text)) {
-        text = text.replace(regex, `<InvoiceNumber>${NEW_INVOICE}</InvoiceNumber>`);
+        const original = invoiceMatch[1];
+        setOriginalInvoiceNumber(original);
+        // Transform: prefix "FE" + remove "/"
+        const transformed = "FE" + original.replace(/\//g, "");
+        setTransformedInvoiceNumber(transformed);
         setReplacementDone(true);
       } else {
         setReplacementDone(false);
