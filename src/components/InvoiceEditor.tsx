@@ -9,9 +9,7 @@ declare const pdfjsLib: any;
 declare const jspdf: any;
 
 const STEPS = ["XML Import", "PDF Display", "Annotate", "Download"];
-const OLD_INVOICE = "FE0C70114558";
-const NEW_INVOICE = "C7/0114558";
-const ANNOTATION_INVOICE = "FE" + NEW_INVOICE.replace("/", "");
+// Dynamic transformation: prefix "FE" + remove "/"
 
 interface TextAnnotation {
   text: string;
