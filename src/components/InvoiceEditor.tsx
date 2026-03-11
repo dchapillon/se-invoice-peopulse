@@ -9,9 +9,7 @@ declare const pdfjsLib: any;
 declare const jspdf: any;
 
 const STEPS = ["XML Import", "PDF Display", "Annotate", "Download"];
-const OLD_INVOICE = "FE0C70114558";
-const NEW_INVOICE = "C7/0114558";
-const ANNOTATION_INVOICE = "FE" + NEW_INVOICE.replace("/", "");
+// Dynamic transformation: prefix "FE" + remove "/"
 
 interface TextAnnotation {
   text: string;
@@ -26,6 +24,7 @@ interface TextAnnotation {
 const InvoiceEditor = () => {
   const [step, setStep] = useState(1);
   const [xmlContent, setXmlContent] = useState("");
+  const [transformedInvoiceNumber, setTransformedInvoiceNumber] = useState("");
   const [fileName, setFileName] = useState("");
   const [originalInvoiceNumber, setOriginalInvoiceNumber] = useState("");
   const [replacementDone, setReplacementDone] = useState(false);
@@ -52,12 +51,11 @@ const InvoiceEditor = () => {
       // Extract original invoice number
       const invoiceMatch = text.match(/<InvoiceNumber>(.*?)<\/InvoiceNumber>/);
       if (invoiceMatch) {
-        setOriginalInvoiceNumber(invoiceMatch[1]);
-      }
-      // Replace invoice number
-      const regex = new RegExp(`<InvoiceNumber>${OLD_INVOICE}</InvoiceNumber>`, "g");
-      if (regex.test(text)) {
-        text = text.replace(regex, `<InvoiceNumber>${NEW_INVOICE}</InvoiceNumber>`);
+        const original = invoiceMatch[1];
+        setOriginalInvoiceNumber(original);
+        // Transform: prefix "FE" + remove "/"
+        const transformed = "FE" + original.replace(/\//g, "");
+        setTransformedInvoiceNumber(transformed);
         setReplacementDone(true);
       } else {
         setReplacementDone(false);
@@ -121,7 +119,7 @@ const InvoiceEditor = () => {
       const y = (e.clientY - rect.top) * scaleY;
 
       const newAnnotation: TextAnnotation = {
-        text: ANNOTATION_INVOICE,
+        text: transformedInvoiceNumber,
         x,
         y,
         fontSize: 28,
