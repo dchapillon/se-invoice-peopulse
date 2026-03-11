@@ -24,6 +24,7 @@ interface TextAnnotation {
 const InvoiceEditor = () => {
   const [step, setStep] = useState(1);
   const [xmlContent, setXmlContent] = useState("");
+  const [transformedInvoiceNumber, setTransformedInvoiceNumber] = useState("");
   const [fileName, setFileName] = useState("");
   const [originalInvoiceNumber, setOriginalInvoiceNumber] = useState("");
   const [replacementDone, setReplacementDone] = useState(false);
