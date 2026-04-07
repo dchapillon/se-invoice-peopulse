@@ -21,6 +21,13 @@ interface TextAnnotation {
   confirmed: boolean;
 }
 
+interface PageData {
+  imageData: ImageData;
+  width: number;
+  height: number;
+  yOffset: number;
+}
+
 const InvoiceEditor = () => {
   const [step, setStep] = useState(1);
   const [xmlContent, setXmlContent] = useState("");
@@ -34,7 +41,7 @@ const InvoiceEditor = () => {
   const [isDragging, setIsDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [canvasReady, setCanvasReady] = useState(false);
-  const [pdfPageData, setPdfPageData] = useState<ImageData | null>(null);
+  const [pdfPages, setPdfPages] = useState<PageData[]>([]);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -67,19 +74,18 @@ const InvoiceEditor = () => {
     reader.readAsText(file, "iso-8859-1");
   }, []);
 
-  // Step 2: Extract and render PDF
+  // Step 2: Extract and render PDF (all pages)
   useEffect(() => {
+    if (step !== 2 || !xmlContent) return;
     if (step !== 2 || !xmlContent) return;
 
     const match = xmlContent.match(/<EmbeddedPdf>([\s\S]*?)<\/EmbeddedPdf>/);
     if (!match) return;
 
     let base64 = match[1];
-    // Strip &#13; and whitespace
     base64 = base64.replace(/&#13;/g, "").replace(/\s/g, "");
     setPdfBase64(base64);
 
-    // Decode and render
     const binaryStr = atob(base64);
     const bytes = new Uint8Array(binaryStr.length);
     for (let i = 0; i < binaryStr.length; i++) {
@@ -87,20 +93,44 @@ const InvoiceEditor = () => {
     }
 
     const loadingTask = pdfjsLib.getDocument({ data: bytes });
-    loadingTask.promise.then((pdf: any) => {
-      pdf.getPage(1).then((page: any) => {
-        const scale = 2;
+    loadingTask.promise.then(async (pdf: any) => {
+      const scale = 2;
+      const pages: PageData[] = [];
+      let totalHeight = 0;
+      let maxWidth = 0;
+
+      // Render each page to an offscreen canvas to capture ImageData
+      for (let p = 1; p <= pdf.numPages; p++) {
+        const page = await pdf.getPage(p);
         const viewport = page.getViewport({ scale });
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        const ctx = canvas.getContext("2d")!;
-        page.render({ canvasContext: ctx, viewport }).promise.then(() => {
-          setPdfPageData(ctx.getImageData(0, 0, canvas.width, canvas.height));
-          setCanvasReady(true);
+        const offscreen = document.createElement("canvas");
+        offscreen.width = viewport.width;
+        offscreen.height = viewport.height;
+        const offCtx = offscreen.getContext("2d")!;
+        await page.render({ canvasContext: offCtx, viewport }).promise;
+
+        pages.push({
+          imageData: offCtx.getImageData(0, 0, viewport.width, viewport.height),
+          width: viewport.width,
+          height: viewport.height,
+          yOffset: totalHeight,
         });
+        totalHeight += viewport.height;
+        if (viewport.width > maxWidth) maxWidth = viewport.width;
+      }
+
+      // Draw all pages on the main canvas
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      canvas.width = maxWidth;
+      canvas.height = totalHeight;
+      const ctx = canvas.getContext("2d")!;
+      pages.forEach((pg) => {
+        ctx.putImageData(pg.imageData, 0, pg.yOffset);
       });
+
+      setPdfPages(pages);
+      setCanvasReady(true);
     });
   }, [step, xmlContent]);
 
@@ -181,32 +211,32 @@ const InvoiceEditor = () => {
 
   // Redraw canvas with annotations
   useEffect(() => {
-    if (!canvasReady || !pdfPageData) return;
+    if (!canvasReady || pdfPages.length === 0) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d")!;
-    ctx.putImageData(pdfPageData, 0, 0);
+    // Redraw all pages
+    pdfPages.forEach((pg) => {
+      ctx.putImageData(pg.imageData, 0, pg.yOffset);
+    });
 
     annotations.forEach((ann) => {
       ctx.font = `${ann.bold ? "bold " : ""}${ann.fontSize}px sans-serif`;
       const metrics = ctx.measureText(ann.text);
-      // Draw white background to mask content underneath
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(ann.x - 2, ann.y - ann.fontSize, metrics.width + 4, ann.fontSize + 4);
-      // Draw the text on top
       ctx.fillStyle = ann.color;
       ctx.fillText(ann.text, ann.x, ann.y);
       if (!ann.confirmed) {
-        // Draw dashed border around unconfirmed
         ctx.setLineDash([4, 4]);
         ctx.strokeStyle = "hsl(215, 80%, 48%)";
         ctx.lineWidth = 2;
-        const metrics = ctx.measureText(ann.text);
-        ctx.strokeRect(ann.x - 4, ann.y - ann.fontSize, metrics.width + 8, ann.fontSize + 8);
+        const m = ctx.measureText(ann.text);
+        ctx.strokeRect(ann.x - 4, ann.y - ann.fontSize, m.width + 8, ann.fontSize + 8);
         ctx.setLineDash([]);
       }
     });
-  }, [annotations, canvasReady, pdfPageData]);
+  }, [annotations, canvasReady, pdfPages]);
 
   // Update active annotation properties
   const updateAnnotation = (key: keyof TextAnnotation, value: any) => {
@@ -230,16 +260,34 @@ const InvoiceEditor = () => {
   // Step 4: Re-encode and download
   const handleDownload = useCallback(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas || pdfPages.length === 0) return;
 
-    // Create PDF from canvas using jsPDF
     const { jsPDF } = jspdf;
-    const imgData = canvas.toDataURL("image/jpeg", 0.95);
     const pxToMm = 25.4 / 96;
-    const wMm = (canvas.width / 2) * pxToMm;
-    const hMm = (canvas.height / 2) * pxToMm;
-    const doc = new jsPDF({ orientation: wMm > hMm ? "l" : "p", unit: "mm", format: [wMm, hMm] });
-    doc.addImage(imgData, "JPEG", 0, 0, wMm, hMm);
+    const scale = 2;
+
+    // Create a multi-page PDF: extract each page region from the main canvas
+    let doc: any = null;
+    pdfPages.forEach((pg, idx) => {
+      const pageCanvas = document.createElement("canvas");
+      pageCanvas.width = pg.width;
+      pageCanvas.height = pg.height;
+      const pCtx = pageCanvas.getContext("2d")!;
+      // Copy the relevant region from the main annotated canvas
+      const srcData = canvas.getContext("2d")!.getImageData(0, pg.yOffset, pg.width, pg.height);
+      pCtx.putImageData(srcData, 0, 0);
+
+      const imgData = pageCanvas.toDataURL("image/jpeg", 0.95);
+      const wMm = (pg.width / scale) * pxToMm;
+      const hMm = (pg.height / scale) * pxToMm;
+
+      if (idx === 0) {
+        doc = new jsPDF({ orientation: wMm > hMm ? "l" : "p", unit: "mm", format: [wMm, hMm] });
+      } else {
+        doc.addPage([wMm, hMm], wMm > hMm ? "l" : "p");
+      }
+      doc.addImage(imgData, "JPEG", 0, 0, wMm, hMm);
+    });
 
     const pdfArrayBuffer = doc.output("arraybuffer");
     const pdfBytes = new Uint8Array(pdfArrayBuffer);
@@ -249,13 +297,11 @@ const InvoiceEditor = () => {
     }
     const newBase64 = btoa(binary);
 
-    // Replace in XML
     const finalXml = xmlContent.replace(
       /<EmbeddedPdf>[\s\S]*?<\/EmbeddedPdf>/,
       `<EmbeddedPdf>${newBase64}</EmbeddedPdf>`
     );
 
-    // Encode as ISO-8859-1
     const buf = new Uint8Array(finalXml.length);
     for (let i = 0; i < finalXml.length; i++) {
       buf[i] = finalXml.charCodeAt(i) & 0xff;
@@ -267,7 +313,7 @@ const InvoiceEditor = () => {
     a.download = fileName.replace(".xml", "_modified.xml");
     a.click();
     URL.revokeObjectURL(url);
-  }, [xmlContent, fileName]);
+  }, [xmlContent, fileName, pdfPages]);
 
   const activeAnn = activeAnnotation !== null ? annotations[activeAnnotation] : null;
 
