@@ -390,7 +390,7 @@ const InvoiceEditor = () => {
           {step >= 3 && (
             <>
               <p className="text-sm text-muted-foreground mb-3">
-                Click on the PDF above to place text. Drag to reposition before confirming.
+                Cliquez sur le PDF ci-dessus pour placer une annotation sur n'importe quelle page. Glissez pour repositionner avant de confirmer.
               </p>
               {activeAnn && !activeAnn.confirmed && (
                 <div className="flex flex-wrap items-center gap-3 p-3 bg-secondary rounded-md">
@@ -434,9 +434,14 @@ const InvoiceEditor = () => {
                 </div>
               )}
               {annotations.length > 0 && annotations.every((a) => a.confirmed) && step === 3 && (
-                <Button onClick={() => setStep(4)} className="mt-4 gap-2">
-                  <Move className="w-4 h-4" /> Proceed to Download
-                </Button>
+                <div className="mt-4 flex items-center gap-4">
+                  <Button onClick={() => setStep(4)} className="gap-2">
+                    <Move className="w-4 h-4" /> Proceed to Download
+                  </Button>
+                  <span className="text-sm text-muted-foreground">
+                    ou cliquez sur le PDF pour ajouter une autre annotation
+                  </span>
+                </div>
               )}
             </>
           )}
