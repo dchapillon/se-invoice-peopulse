@@ -41,7 +41,7 @@ const InvoiceEditor = () => {
   const [isDragging, setIsDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [canvasReady, setCanvasReady] = useState(false);
-  const [pdfPageData, setPdfPageData] = useState<ImageData | null>(null);
+  const [pdfPages, setPdfPages] = useState<PageData[]>([]);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
