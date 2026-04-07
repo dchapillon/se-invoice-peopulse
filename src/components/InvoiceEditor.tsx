@@ -260,16 +260,34 @@ const InvoiceEditor = () => {
   // Step 4: Re-encode and download
   const handleDownload = useCallback(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas || pdfPages.length === 0) return;
 
-    // Create PDF from canvas using jsPDF
     const { jsPDF } = jspdf;
-    const imgData = canvas.toDataURL("image/jpeg", 0.95);
     const pxToMm = 25.4 / 96;
-    const wMm = (canvas.width / 2) * pxToMm;
-    const hMm = (canvas.height / 2) * pxToMm;
-    const doc = new jsPDF({ orientation: wMm > hMm ? "l" : "p", unit: "mm", format: [wMm, hMm] });
-    doc.addImage(imgData, "JPEG", 0, 0, wMm, hMm);
+    const scale = 2;
+
+    // Create a multi-page PDF: extract each page region from the main canvas
+    let doc: any = null;
+    pdfPages.forEach((pg, idx) => {
+      const pageCanvas = document.createElement("canvas");
+      pageCanvas.width = pg.width;
+      pageCanvas.height = pg.height;
+      const pCtx = pageCanvas.getContext("2d")!;
+      // Copy the relevant region from the main annotated canvas
+      const srcData = canvas.getContext("2d")!.getImageData(0, pg.yOffset, pg.width, pg.height);
+      pCtx.putImageData(srcData, 0, 0);
+
+      const imgData = pageCanvas.toDataURL("image/jpeg", 0.95);
+      const wMm = (pg.width / scale) * pxToMm;
+      const hMm = (pg.height / scale) * pxToMm;
+
+      if (idx === 0) {
+        doc = new jsPDF({ orientation: wMm > hMm ? "l" : "p", unit: "mm", format: [wMm, hMm] });
+      } else {
+        doc.addPage([wMm, hMm], wMm > hMm ? "l" : "p");
+      }
+      doc.addImage(imgData, "JPEG", 0, 0, wMm, hMm);
+    });
 
     const pdfArrayBuffer = doc.output("arraybuffer");
     const pdfBytes = new Uint8Array(pdfArrayBuffer);
@@ -279,13 +297,11 @@ const InvoiceEditor = () => {
     }
     const newBase64 = btoa(binary);
 
-    // Replace in XML
     const finalXml = xmlContent.replace(
       /<EmbeddedPdf>[\s\S]*?<\/EmbeddedPdf>/,
       `<EmbeddedPdf>${newBase64}</EmbeddedPdf>`
     );
 
-    // Encode as ISO-8859-1
     const buf = new Uint8Array(finalXml.length);
     for (let i = 0; i < finalXml.length; i++) {
       buf[i] = finalXml.charCodeAt(i) & 0xff;
@@ -297,7 +313,7 @@ const InvoiceEditor = () => {
     a.download = fileName.replace(".xml", "_modified.xml");
     a.click();
     URL.revokeObjectURL(url);
-  }, [xmlContent, fileName]);
+  }, [xmlContent, fileName, pdfPages]);
 
   const activeAnn = activeAnnotation !== null ? annotations[activeAnnotation] : null;
 
