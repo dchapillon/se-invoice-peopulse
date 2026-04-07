@@ -74,12 +74,9 @@ const InvoiceEditor = () => {
     reader.readAsText(file, "iso-8859-1");
   }, []);
 
-  // Step 2: Extract and render PDF
-  useEffect(() => {
-    if (step !== 2 || !xmlContent) return;
-
   // Step 2: Extract and render PDF (all pages)
   useEffect(() => {
+    if (step !== 2 || !xmlContent) return;
     if (step !== 2 || !xmlContent) return;
 
     const match = xmlContent.match(/<EmbeddedPdf>([\s\S]*?)<\/EmbeddedPdf>/);
