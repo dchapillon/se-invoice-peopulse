@@ -21,6 +21,13 @@ interface TextAnnotation {
   confirmed: boolean;
 }
 
+interface PageData {
+  imageData: ImageData;
+  width: number;
+  height: number;
+  yOffset: number;
+}
+
 const InvoiceEditor = () => {
   const [step, setStep] = useState(1);
   const [xmlContent, setXmlContent] = useState("");
