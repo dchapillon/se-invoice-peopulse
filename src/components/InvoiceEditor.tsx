@@ -211,32 +211,32 @@ const InvoiceEditor = () => {
 
   // Redraw canvas with annotations
   useEffect(() => {
-    if (!canvasReady || !pdfPageData) return;
+    if (!canvasReady || pdfPages.length === 0) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d")!;
-    ctx.putImageData(pdfPageData, 0, 0);
+    // Redraw all pages
+    pdfPages.forEach((pg) => {
+      ctx.putImageData(pg.imageData, 0, pg.yOffset);
+    });
 
     annotations.forEach((ann) => {
       ctx.font = `${ann.bold ? "bold " : ""}${ann.fontSize}px sans-serif`;
       const metrics = ctx.measureText(ann.text);
-      // Draw white background to mask content underneath
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(ann.x - 2, ann.y - ann.fontSize, metrics.width + 4, ann.fontSize + 4);
-      // Draw the text on top
       ctx.fillStyle = ann.color;
       ctx.fillText(ann.text, ann.x, ann.y);
       if (!ann.confirmed) {
-        // Draw dashed border around unconfirmed
         ctx.setLineDash([4, 4]);
         ctx.strokeStyle = "hsl(215, 80%, 48%)";
         ctx.lineWidth = 2;
-        const metrics = ctx.measureText(ann.text);
-        ctx.strokeRect(ann.x - 4, ann.y - ann.fontSize, metrics.width + 8, ann.fontSize + 8);
+        const m = ctx.measureText(ann.text);
+        ctx.strokeRect(ann.x - 4, ann.y - ann.fontSize, m.width + 8, ann.fontSize + 8);
         ctx.setLineDash([]);
       }
     });
-  }, [annotations, canvasReady, pdfPageData]);
+  }, [annotations, canvasReady, pdfPages]);
 
   // Update active annotation properties
   const updateAnnotation = (key: keyof TextAnnotation, value: any) => {
