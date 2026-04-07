@@ -78,15 +78,17 @@ const InvoiceEditor = () => {
   useEffect(() => {
     if (step !== 2 || !xmlContent) return;
 
+  // Step 2: Extract and render PDF (all pages)
+  useEffect(() => {
+    if (step !== 2 || !xmlContent) return;
+
     const match = xmlContent.match(/<EmbeddedPdf>([\s\S]*?)<\/EmbeddedPdf>/);
     if (!match) return;
 
     let base64 = match[1];
-    // Strip &#13; and whitespace
     base64 = base64.replace(/&#13;/g, "").replace(/\s/g, "");
     setPdfBase64(base64);
 
-    // Decode and render
     const binaryStr = atob(base64);
     const bytes = new Uint8Array(binaryStr.length);
     for (let i = 0; i < binaryStr.length; i++) {
@@ -94,20 +96,44 @@ const InvoiceEditor = () => {
     }
 
     const loadingTask = pdfjsLib.getDocument({ data: bytes });
-    loadingTask.promise.then((pdf: any) => {
-      pdf.getPage(1).then((page: any) => {
-        const scale = 2;
+    loadingTask.promise.then(async (pdf: any) => {
+      const scale = 2;
+      const pages: PageData[] = [];
+      let totalHeight = 0;
+      let maxWidth = 0;
+
+      // Render each page to an offscreen canvas to capture ImageData
+      for (let p = 1; p <= pdf.numPages; p++) {
+        const page = await pdf.getPage(p);
         const viewport = page.getViewport({ scale });
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        const ctx = canvas.getContext("2d")!;
-        page.render({ canvasContext: ctx, viewport }).promise.then(() => {
-          setPdfPageData(ctx.getImageData(0, 0, canvas.width, canvas.height));
-          setCanvasReady(true);
+        const offscreen = document.createElement("canvas");
+        offscreen.width = viewport.width;
+        offscreen.height = viewport.height;
+        const offCtx = offscreen.getContext("2d")!;
+        await page.render({ canvasContext: offCtx, viewport }).promise;
+
+        pages.push({
+          imageData: offCtx.getImageData(0, 0, viewport.width, viewport.height),
+          width: viewport.width,
+          height: viewport.height,
+          yOffset: totalHeight,
         });
+        totalHeight += viewport.height;
+        if (viewport.width > maxWidth) maxWidth = viewport.width;
+      }
+
+      // Draw all pages on the main canvas
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      canvas.width = maxWidth;
+      canvas.height = totalHeight;
+      const ctx = canvas.getContext("2d")!;
+      pages.forEach((pg) => {
+        ctx.putImageData(pg.imageData, 0, pg.yOffset);
       });
+
+      setPdfPages(pages);
+      setCanvasReady(true);
     });
   }, [step, xmlContent]);
 
