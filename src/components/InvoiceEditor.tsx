@@ -614,6 +614,14 @@ const InvoiceEditor = () => {
             </>
           )}
         </section>
+
+        <footer
+          className="text-center text-xs text-muted-foreground/60 select-all"
+          title={`Build du ${new Date(__BUILD_DATE__).toLocaleString("fr-FR")}`}
+        >
+          v{__APP_VERSION__}
+          {__GIT_COMMIT__ && ` · ${__GIT_COMMIT__}`}
+        </footer>
       </div>
     </div>
   );
