@@ -1,15 +1,60 @@
-import { useState, useRef, useCallback, useEffect } from "react";
-import { Upload, Download, Check, Type, Move } from "lucide-react";
+import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { Upload, Download, Check, Type, Move, ListChecks } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import StepIndicator from "./StepIndicator";
+import {
+  parseInvoiceFile,
+  extractPdfBase64,
+  defaultAnnotationText,
+  applyInvoiceChanges,
+} from "@/lib/invoiceFormats";
 
-declare const pdfjsLib: any;
-declare const jspdf: any;
+// Bibliothèques chargées par CDN (voir index.html), typées au strict nécessaire
+interface PdfPage {
+  getViewport(opts: { scale: number }): { width: number; height: number };
+  render(opts: {
+    canvasContext: CanvasRenderingContext2D;
+    viewport: { width: number; height: number };
+  }): { promise: Promise<void> };
+}
+interface PdfDocument {
+  numPages: number;
+  getPage(n: number): Promise<PdfPage>;
+}
+interface JsPdfDoc {
+  addPage(format: [number, number], orientation: string): void;
+  addImage(data: string, type: string, x: number, y: number, w: number, h: number): void;
+  output(type: "arraybuffer"): ArrayBuffer;
+}
+declare const pdfjsLib: {
+  getDocument(src: { data: Uint8Array }): { promise: Promise<PdfDocument> };
+};
+declare const jspdf: {
+  jsPDF: new (opts: { orientation: string; unit: string; format: [number, number] }) => JsPdfDoc;
+};
 
 const STEPS = ["XML Import", "PDF Display", "Annotate", "Download"];
-// Dynamic transformation: prefix "FE" + remove "/"
+
+// Rendu PDF.js : 1 unité de viewport = 1 point (1/72 pouce) à scale 1
+const RENDER_SCALE = 2;
+const PT_TO_MM = 25.4 / 72;
+
+// Échappe un texte pour l'insérer dans du XML. Les caractères hors Latin-1
+// (non représentables dans le fichier ISO-8859-1) deviennent des références numériques.
+const escapeXml = (text: string) => {
+  let out = "";
+  for (const ch of text) {
+    const code = ch.codePointAt(0)!;
+    if (ch === "&") out += "&amp;";
+    else if (ch === "<") out += "&lt;";
+    else if (ch === ">") out += "&gt;";
+    else if (code > 0xff) out += `&#${code};`;
+    else out += ch;
+  }
+  return out;
+};
 
 interface TextAnnotation {
   text: string;
@@ -31,11 +76,12 @@ interface PageData {
 const InvoiceEditor = () => {
   const [step, setStep] = useState(1);
   const [xmlContent, setXmlContent] = useState("");
-  const [transformedInvoiceNumber, setTransformedInvoiceNumber] = useState("");
   const [fileName, setFileName] = useState("");
-  const [originalInvoiceNumber, setOriginalInvoiceNumber] = useState("");
-  const [replacementDone, setReplacementDone] = useState(false);
-  const [pdfBase64, setPdfBase64] = useState("");
+  const [selectedIdx, setSelectedIdx] = useState(-1);
+  // Factures déjà annotées et intégrées au XML (fichiers multi-factures PIXID)
+  const [processed, setProcessed] = useState<Set<number>>(new Set());
+  const [loadId, setLoadId] = useState(0);
+  const [error, setError] = useState("");
   const [annotations, setAnnotations] = useState<TextAnnotation[]>([]);
   const [activeAnnotation, setActiveAnnotation] = useState<number | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -46,93 +92,117 @@ const InvoiceEditor = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Step 1: Handle XML upload
-  const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setFileName(file.name);
+  // Format et liste des factures, recalculés à chaque modification du XML
+  const parsed = useMemo(() => parseInvoiceFile(xmlContent), [xmlContent]);
+  const currentInvoice = parsed.invoices[selectedIdx] ?? null;
+  const originalInvoiceNumber = currentInvoice?.number ?? "";
+  const transformedInvoiceNumber = defaultAnnotationText(parsed.format, originalInvoiceNumber);
+  const pdfBase64 = currentInvoice ? extractPdfBase64(xmlContent, currentInvoice) : "";
 
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      let text = ev.target?.result as string;
-      // Extract original invoice number
-      const invoiceMatch = text.match(/<InvoiceNumber>(.*?)<\/InvoiceNumber>/);
-      if (invoiceMatch) {
-        const original = invoiceMatch[1];
-        setOriginalInvoiceNumber(original);
-        // Transform: prefix "FE" + remove "/"
-        const transformed = "FE" + original.replace(/\//g, "");
-        setTransformedInvoiceNumber(transformed);
-        setReplacementDone(true);
-      } else {
-        setReplacementDone(false);
-      }
-      setXmlContent(text);
-      setStep(2);
-    };
-    // Read as ISO-8859-1
-    reader.readAsText(file, "iso-8859-1");
+  // Réinitialise l'annotation en cours et (re)charge la facture choisie
+  const selectInvoice = useCallback((idx: number) => {
+    setAnnotations([]);
+    setActiveAnnotation(null);
+    setIsDragging(false);
+    setCanvasReady(false);
+    setPdfPages([]);
+    setError("");
+    setSelectedIdx(idx);
+    setLoadId((n) => n + 1);
+    setStep(2);
   }, []);
 
-  // Step 2: Extract and render PDF (all pages)
+  // Step 1: Handle XML upload
+  const handleFileUpload = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      setFileName(file.name);
+      // Permet de re-sélectionner le même fichier
+      e.target.value = "";
+
+      const reader = new FileReader();
+      reader.onerror = () => setError("Impossible de lire le fichier.");
+      reader.onload = (ev) => {
+        const text = ev.target?.result as string;
+        const { invoices } = parseInvoiceFile(text);
+        const firstWithPdf = invoices.findIndex((inv) => inv.pdfSpan);
+
+        setXmlContent(text);
+        setProcessed(new Set());
+        selectInvoice(firstWithPdf);
+        if (firstWithPdf < 0) {
+          setError("Aucun PDF embarqué trouvé dans ce fichier (formats gérés : PEOPULSE, PIXID, PILOTT).");
+        }
+      };
+      // Read as ISO-8859-1
+      reader.readAsText(file, "iso-8859-1");
+    },
+    [selectInvoice]
+  );
+
+  // Step 2: Render PDF (all pages). Ne dépend que du PDF, pas du XML modifié.
   useEffect(() => {
-    if (step !== 2 || !xmlContent) return;
-    if (step !== 2 || !xmlContent) return;
+    if (!pdfBase64) return;
+    let cancelled = false;
 
-    const match = xmlContent.match(/<EmbeddedPdf>([\s\S]*?)<\/EmbeddedPdf>/);
-    if (!match) return;
+    (async () => {
+      try {
+        if (typeof pdfjsLib === "undefined") throw new Error("pdf.js n'est pas chargé");
+        const binaryStr = atob(pdfBase64);
+        const bytes = new Uint8Array(binaryStr.length);
+        for (let i = 0; i < binaryStr.length; i++) {
+          bytes[i] = binaryStr.charCodeAt(i);
+        }
 
-    let base64 = match[1];
-    base64 = base64.replace(/&#13;/g, "").replace(/\s/g, "");
-    setPdfBase64(base64);
+        const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+        const pages: PageData[] = [];
+        let totalHeight = 0;
+        let maxWidth = 0;
 
-    const binaryStr = atob(base64);
-    const bytes = new Uint8Array(binaryStr.length);
-    for (let i = 0; i < binaryStr.length; i++) {
-      bytes[i] = binaryStr.charCodeAt(i);
-    }
+        // Render each page to an offscreen canvas to capture ImageData
+        for (let p = 1; p <= pdf.numPages; p++) {
+          const page = await pdf.getPage(p);
+          const viewport = page.getViewport({ scale: RENDER_SCALE });
+          const offscreen = document.createElement("canvas");
+          offscreen.width = viewport.width;
+          offscreen.height = viewport.height;
+          const offCtx = offscreen.getContext("2d")!;
+          await page.render({ canvasContext: offCtx, viewport }).promise;
 
-    const loadingTask = pdfjsLib.getDocument({ data: bytes });
-    loadingTask.promise.then(async (pdf: any) => {
-      const scale = 2;
-      const pages: PageData[] = [];
-      let totalHeight = 0;
-      let maxWidth = 0;
+          pages.push({
+            imageData: offCtx.getImageData(0, 0, offscreen.width, offscreen.height),
+            width: offscreen.width,
+            height: offscreen.height,
+            yOffset: totalHeight,
+          });
+          totalHeight += offscreen.height;
+          if (offscreen.width > maxWidth) maxWidth = offscreen.width;
+        }
+        if (cancelled) return;
 
-      // Render each page to an offscreen canvas to capture ImageData
-      for (let p = 1; p <= pdf.numPages; p++) {
-        const page = await pdf.getPage(p);
-        const viewport = page.getViewport({ scale });
-        const offscreen = document.createElement("canvas");
-        offscreen.width = viewport.width;
-        offscreen.height = viewport.height;
-        const offCtx = offscreen.getContext("2d")!;
-        await page.render({ canvasContext: offCtx, viewport }).promise;
+        // Draw all pages on the main canvas
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        canvas.width = maxWidth;
+        canvas.height = totalHeight;
+        const ctx = canvas.getContext("2d")!;
+        pages.forEach((pg) => ctx.putImageData(pg.imageData, 0, pg.yOffset));
 
-        pages.push({
-          imageData: offCtx.getImageData(0, 0, viewport.width, viewport.height),
-          width: viewport.width,
-          height: viewport.height,
-          yOffset: totalHeight,
-        });
-        totalHeight += viewport.height;
-        if (viewport.width > maxWidth) maxWidth = viewport.width;
+        setPdfPages(pages);
+        setCanvasReady(true);
+      } catch (err) {
+        if (!cancelled) {
+          console.error(err);
+          setError("Impossible d'afficher le PDF embarqué (données invalides ?).");
+        }
       }
+    })();
 
-      // Draw all pages on the main canvas
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      canvas.width = maxWidth;
-      canvas.height = totalHeight;
-      const ctx = canvas.getContext("2d")!;
-      pages.forEach((pg) => {
-        ctx.putImageData(pg.imageData, 0, pg.yOffset);
-      });
-
-      setPdfPages(pages);
-      setCanvasReady(true);
-    });
-  }, [step, xmlContent]);
+    return () => {
+      cancelled = true;
+    };
+  }, [loadId, pdfBase64]);
 
   // Step 3: Click on canvas to place annotation
   const handleCanvasClick = useCallback(
@@ -152,15 +222,15 @@ const InvoiceEditor = () => {
         text: transformedInvoiceNumber,
         x,
         y,
-        fontSize: 28,
+        fontSize: 18,
         color: "#000000",
-        bold: false,
+        bold: true,
         confirmed: false,
       };
       setAnnotations((prev) => [...prev, newAnnotation]);
       setActiveAnnotation(annotations.length);
     },
-    [step, canvasReady, annotations]
+    [step, canvasReady, annotations, transformedInvoiceNumber]
   );
 
   // Drag handling
@@ -177,7 +247,17 @@ const InvoiceEditor = () => {
       const mx = (e.clientX - rect.left) * scaleX;
       const my = (e.clientY - rect.top) * scaleY;
 
-      if (Math.abs(mx - ann.x) < 150 && Math.abs(my - ann.y) < 40) {
+      // Zone de prise = boîte réelle du texte (+ marge)
+      const ctx = canvas.getContext("2d")!;
+      ctx.font = `${ann.bold ? "bold " : ""}${ann.fontSize}px sans-serif`;
+      const textWidth = ctx.measureText(ann.text).width;
+      const margin = 10;
+      if (
+        mx >= ann.x - margin &&
+        mx <= ann.x + textWidth + margin &&
+        my >= ann.y - ann.fontSize - margin &&
+        my <= ann.y + margin
+      ) {
         setIsDragging(true);
         setDragOffset({ x: mx - ann.x, y: my - ann.y });
         e.preventDefault();
@@ -239,7 +319,7 @@ const InvoiceEditor = () => {
   }, [annotations, canvasReady, pdfPages]);
 
   // Update active annotation properties
-  const updateAnnotation = (key: keyof TextAnnotation, value: any) => {
+  const updateAnnotation = (key: keyof TextAnnotation, value: string | number | boolean) => {
     if (activeAnnotation === null) return;
     setAnnotations((prev) =>
       prev.map((a, i) => (i === activeAnnotation ? { ...a, [key]: value } : a))
@@ -249,37 +329,39 @@ const InvoiceEditor = () => {
   const confirmAnnotation = () => {
     if (activeAnnotation === null) return;
     const ann = annotations[activeAnnotation];
-    // Update the InvoiceNumber tag in the XML with the annotation text
-    setXmlContent((prev) =>
-      prev.replace(/<InvoiceNumber>.*?<\/InvoiceNumber>/, `<InvoiceNumber>${ann.text}</InvoiceNumber>`)
-    );
+    if (!ann.text.trim()) return;
     updateAnnotation("confirmed", true);
     setActiveAnnotation(null);
   };
 
-  // Step 4: Re-encode and download
-  const handleDownload = useCallback(() => {
+  // XML final : facture courante mise à jour (numéro = dernière annotation confirmée,
+  // PDF = rendu annoté). Les factures déjà traitées sont déjà intégrées à xmlContent.
+  const buildFinalXml = useCallback((): string | null => {
     const canvas = canvasRef.current;
-    if (!canvas || pdfPages.length === 0) return;
+    if (!canvas || pdfPages.length === 0 || !currentInvoice) return null;
 
+    if (typeof jspdf === "undefined") {
+      setError("jsPDF n'est pas chargé : impossible de générer le PDF.");
+      return null;
+    }
     const { jsPDF } = jspdf;
-    const pxToMm = 25.4 / 96;
-    const scale = 2;
+    const srcCtx = canvas.getContext("2d")!;
 
     // Create a multi-page PDF: extract each page region from the main canvas
-    let doc: any = null;
+    let doc: JsPdfDoc | null = null;
     pdfPages.forEach((pg, idx) => {
       const pageCanvas = document.createElement("canvas");
       pageCanvas.width = pg.width;
       pageCanvas.height = pg.height;
       const pCtx = pageCanvas.getContext("2d")!;
       // Copy the relevant region from the main annotated canvas
-      const srcData = canvas.getContext("2d")!.getImageData(0, pg.yOffset, pg.width, pg.height);
+      const srcData = srcCtx.getImageData(0, pg.yOffset, pg.width, pg.height);
       pCtx.putImageData(srcData, 0, 0);
 
       const imgData = pageCanvas.toDataURL("image/jpeg", 0.95);
-      const wMm = (pg.width / scale) * pxToMm;
-      const hMm = (pg.height / scale) * pxToMm;
+      // Pixels du canvas -> points PDF (÷ scale de rendu) -> mm (1 pt = 1/72")
+      const wMm = (pg.width / RENDER_SCALE) * PT_TO_MM;
+      const hMm = (pg.height / RENDER_SCALE) * PT_TO_MM;
 
       if (idx === 0) {
         doc = new jsPDF({ orientation: wMm > hMm ? "l" : "p", unit: "mm", format: [wMm, hMm] });
@@ -297,11 +379,19 @@ const InvoiceEditor = () => {
     }
     const newBase64 = btoa(binary);
 
-    const finalXml = xmlContent.replace(
-      /<EmbeddedPdf>[\s\S]*?<\/EmbeddedPdf>/,
-      `<EmbeddedPdf>${newBase64}</EmbeddedPdf>`
-    );
+    const lastConfirmed = [...annotations].reverse().find((a) => a.confirmed && a.text.trim());
+    return applyInvoiceChanges(xmlContent, currentInvoice, {
+      number: lastConfirmed ? escapeXml(lastConfirmed.text.trim()) : undefined,
+      pdfBase64: newBase64,
+    });
+  }, [xmlContent, pdfPages, currentInvoice, annotations]);
 
+  // Step 4: Re-encode and download
+  const handleDownload = useCallback(() => {
+    const finalXml = buildFinalXml();
+    if (finalXml === null) return;
+
+    // Écriture en ISO-8859-1 (1 octet par caractère ; le texte saisi a été échappé)
     const buf = new Uint8Array(finalXml.length);
     for (let i = 0; i < finalXml.length; i++) {
       buf[i] = finalXml.charCodeAt(i) & 0xff;
@@ -310,10 +400,24 @@ const InvoiceEditor = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = fileName.replace(".xml", "_modified.xml");
+    a.download = /\.xml$/i.test(fileName)
+      ? fileName.replace(/\.xml$/i, "_modified.xml")
+      : `${fileName}_modified.xml`;
     a.click();
     URL.revokeObjectURL(url);
-  }, [xmlContent, fileName, pdfPages]);
+  }, [buildFinalXml, fileName]);
+
+  // Multi-factures : intègre la facture courante au XML puis passe à une autre
+  const commitAndSelect = (idx: number) => {
+    const finalXml = buildFinalXml();
+    if (finalXml === null) return;
+    setXmlContent(finalXml);
+    setProcessed((prev) => new Set(prev).add(selectedIdx));
+    selectInvoice(idx);
+  };
+  const nextInvoiceIdx = parsed.invoices.findIndex(
+    (inv, i) => inv.pdfSpan && i !== selectedIdx && !processed.has(i)
+  );
 
   const activeAnn = activeAnnotation !== null ? annotations[activeAnnotation] : null;
 
@@ -345,6 +449,39 @@ const InvoiceEditor = () => {
             <Upload className="w-4 h-4" />
             {fileName || "Choose XML file"}
           </Button>
+          {fileName && step >= 2 && xmlContent && (
+            <Badge variant="outline" className="ml-3">
+              Format : {parsed.format} · {parsed.invoices.length} facture
+              {parsed.invoices.length > 1 ? "s" : ""}
+            </Badge>
+          )}
+          {parsed.invoices.length > 1 && step >= 2 && (
+            <div className="mt-3">
+              <p className="text-sm text-muted-foreground mb-2 flex items-center gap-1">
+                <ListChecks className="w-4 h-4" /> Choisissez la facture à annoter
+                ({processed.size} traitée{processed.size > 1 ? "s" : ""}) :
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {parsed.invoices.map((inv, i) => (
+                  <Button
+                    key={i}
+                    size="sm"
+                    variant={i === selectedIdx ? "default" : "outline"}
+                    disabled={!inv.pdfSpan}
+                    title={inv.pdfSpan ? undefined : "Pas de PDF embarqué"}
+                    onClick={() => i !== selectedIdx && selectInvoice(i)}
+                    className="gap-1"
+                  >
+                    {processed.has(i) && <Check className="w-3 h-3" />}
+                    {inv.number || `Facture ${i + 1}`}
+                  </Button>
+                ))}
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Changer de facture abandonne les annotations non intégrées de la facture courante.
+              </p>
+            </div>
+          )}
           {originalInvoiceNumber && step >= 2 && (
             <div className="mt-3 p-3 bg-secondary rounded-md text-sm text-foreground">
               <span className="text-muted-foreground">Numéro de facture trouvé :</span>{" "}
@@ -353,7 +490,7 @@ const InvoiceEditor = () => {
           )}
           {fileName && !originalInvoiceNumber && step >= 2 && (
             <Badge variant="secondary" className="mt-2">
-              Aucune balise InvoiceNumber trouvée
+              Aucun numéro de facture trouvé
             </Badge>
           )}
         </section>
@@ -372,9 +509,11 @@ const InvoiceEditor = () => {
                 onMouseDown={step >= 3 ? handleCanvasMouseDown : undefined}
                 onMouseMove={step >= 3 ? handleCanvasMouseMove : undefined}
                 onMouseUp={step >= 3 ? handleCanvasMouseUp : undefined}
+                onMouseLeave={step >= 3 ? handleCanvasMouseUp : undefined}
               />
             </div>
           )}
+          {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
           {canvasReady && step === 2 && (
             <Button onClick={() => setStep(3)} className="mt-4 gap-2">
               <Type className="w-4 h-4" /> Proceed to Annotate
@@ -405,7 +544,7 @@ const InvoiceEditor = () => {
                     <Input
                       type="number"
                       value={activeAnn.fontSize}
-                      onChange={(e) => updateAnnotation("fontSize", parseInt(e.target.value) || 14)}
+                      onChange={(e) => updateAnnotation("fontSize", parseInt(e.target.value) || 18)}
                       className="w-16"
                       min={8}
                       max={72}
@@ -457,9 +596,21 @@ const InvoiceEditor = () => {
               <p className="text-sm text-muted-foreground mb-3">
                 The annotated PDF will be re-encoded and injected back into the XML.
               </p>
-              <Button onClick={handleDownload} className="gap-2">
-                <Download className="w-4 h-4" /> Download Modified XML
-              </Button>
+              <div className="flex flex-wrap gap-3">
+                <Button onClick={handleDownload} className="gap-2">
+                  <Download className="w-4 h-4" /> Download Modified XML
+                </Button>
+                {nextInvoiceIdx >= 0 && (
+                  <Button variant="outline" onClick={() => commitAndSelect(nextInvoiceIdx)} className="gap-2">
+                    <ListChecks className="w-4 h-4" /> Intégrer et passer à la facture suivante
+                  </Button>
+                )}
+              </div>
+              {parsed.invoices.length > 1 && (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Le XML téléchargé contient toutes les factures déjà intégrées ainsi que la facture courante.
+                </p>
+              )}
             </>
           )}
         </section>
